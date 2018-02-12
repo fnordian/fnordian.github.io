@@ -4,7 +4,7 @@
   <title><![CDATA[Random tech thoughts]]></title>
   <link href="http://fnordian.github.io/atom.xml" rel="self"/>
   <link href="http://fnordian.github.io/"/>
-  <updated>2018-02-11T11:58:26+07:00</updated>
+  <updated>2018-02-12T09:06:42+07:00</updated>
   <id>http://fnordian.github.io/</id>
   <author>
     <name><![CDATA[Marcus Hunger]]></name>
@@ -12,6 +12,106 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Limitted Authorization for a Kubernetes User With Python]]></title>
+    <link href="http://fnordian.github.io/blog/2018/02/12/limitted-authorization-for-a-kubernetes-user-with-python/"/>
+    <updated>2018-02-12T08:09:56+07:00</updated>
+    <id>http://fnordian.github.io/blog/2018/02/12/limitted-authorization-for-a-kubernetes-user-with-python</id>
+    <content type="html"><![CDATA[<p>While last post&rsquo;s
+was about <a href="http://fnordian.github.io/blog/2018/02/11/creating-client-certificates-for-kubernetes-apiserver-with-python/">authenticating a user</a>
+to kubernetes, this one handles authorization.</p>
+
+<p>Different levels of authorization in kubernetes can be achieved through <em>namespaces</em>, <em>roles</em> and <em>rolebindings</em>.
+In order to limit a user to his/her own space in the cluster, we create a personal namespace and bind a role to it.
+The role describes the types of access, the user will have.
+This kind of authorization is called RBAC, <a href="https://kubernetes.io/docs/admin/authorization/rbac/">role-based access control</a>.</p>
+
+<p>A namespace in kubernetes is defined just by a name. So creating it is easy:</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">from</span> <span class="nn">kubernetes</span> <span class="kn">import</span> <span class="n">client</span>
+</span><span class='line'><span class="n">v1</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">CoreV1Api</span><span class="p">()</span>
+</span><span class='line'><span class="n">v1</span><span class="o">.</span><span class="n">create_namespace</span><span class="p">(</span><span class="s">&quot;user-namespace&quot;</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p></p>
+
+<p>Roles are a bit more complex. They specify the access rights for the user. These rights are defined as a list of rules,
+which are additive and declare the resources and the type of access the role will give.</p>
+
+<p>Besides roles, there are also cluster roles. The difference between those is, that a role is specific to a namespace,
+while a cluster role is not.</p>
+
+<p>The example below gives a user enough rights to create, manage and delete deployments. Note that as a role is specific
+to a namespace and that a user-namespace is specific to a user, there will be a role for every user.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">kubernetes</span>
+</span><span class='line'><span class="n">rules</span> <span class="o">=</span> <span class="p">[</span>
+</span><span class='line'>        <span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">V1PolicyRule</span><span class="p">([</span><span class="s">&quot;&quot;</span><span class="p">],</span> <span class="n">resources</span><span class="o">=</span><span class="p">[</span><span class="s">&quot;pods&quot;</span><span class="p">],</span> <span class="n">verbs</span><span class="o">=</span><span class="p">[</span><span class="s">&quot;get&quot;</span><span class="p">,</span> <span class="s">&quot;list&quot;</span><span class="p">,</span> <span class="s">&quot;create&quot;</span><span class="p">,</span> <span class="s">&quot;delete&quot;</span><span class="p">,</span> <span class="s">&quot;update&quot;</span><span class="p">],</span> <span class="p">),</span>
+</span><span class='line'>        <span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">V1PolicyRule</span><span class="p">([</span><span class="s">&quot;extensions&quot;</span><span class="p">],</span> <span class="n">resources</span><span class="o">=</span><span class="p">[</span><span class="s">&quot;deployments&quot;</span><span class="p">,</span> <span class="s">&quot;replicasets&quot;</span><span class="p">],</span>
+</span><span class='line'>                                       <span class="n">verbs</span><span class="o">=</span><span class="p">[</span><span class="s">&quot;get&quot;</span><span class="p">,</span> <span class="s">&quot;list&quot;</span><span class="p">,</span> <span class="s">&quot;create&quot;</span><span class="p">,</span> <span class="s">&quot;delete&quot;</span><span class="p">,</span> <span class="s">&quot;update&quot;</span><span class="p">],</span> <span class="p">)</span>
+</span><span class='line'>    <span class="p">]</span>
+</span><span class='line'><span class="n">role</span> <span class="o">=</span> <span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">V1Role</span><span class="p">(</span><span class="n">rules</span><span class="o">=</span><span class="n">rules</span><span class="p">)</span>
+</span><span class='line'><span class="n">role</span><span class="o">.</span><span class="n">metadata</span> <span class="o">=</span> <span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">V1ObjectMeta</span><span class="p">(</span><span class="n">namespace</span><span class="o">=</span><span class="s">&quot;user-namespace&quot;</span><span class="p">,</span>
+</span><span class='line'>                                               <span class="n">name</span><span class="o">=</span><span class="s">&quot;user-role&quot;</span><span class="p">)</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">rbac</span> <span class="o">=</span> <span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">RbacAuthorizationV1Api</span><span class="p">()</span>
+</span><span class='line'><span class="n">rbac</span><span class="o">.</span><span class="n">create_namespaced_role</span><span class="p">(</span><span class="s">&quot;user-namespace&quot;</span><span class="p">,</span> <span class="n">role</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The created role must be bound to a user, otherwise it is not effective. Binding happens through role bindings.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+</pre></td><td class='code'><pre><code class='python'><span class='line'><span class="kn">import</span> <span class="nn">kubernetes</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">role_binding</span> <span class="o">=</span> <span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">V1RoleBinding</span><span class="p">(</span>
+</span><span class='line'>        <span class="n">metadata</span><span class="o">=</span><span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">V1ObjectMeta</span><span class="p">(</span><span class="n">namespace</span><span class="o">=</span><span class="s">&quot;user-namespace&quot;</span><span class="p">,</span>
+</span><span class='line'>                                                <span class="n">name</span><span class="o">=</span><span class="s">&quot;user-role-binding&quot;</span><span class="p">),</span>
+</span><span class='line'>        <span class="n">subjects</span><span class="o">=</span><span class="p">[</span><span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">V1Subject</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s">&quot;user&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s">&quot;User&quot;</span><span class="p">,</span> <span class="n">api_group</span><span class="o">=</span><span class="s">&quot;rbac.authorization.k8s.io&quot;</span><span class="p">)],</span>
+</span><span class='line'>        <span class="n">role_ref</span><span class="o">=</span><span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">V1RoleRef</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s">&quot;Role&quot;</span><span class="p">,</span> <span class="n">api_group</span><span class="o">=</span><span class="s">&quot;rbac.authorization.k8s.io&quot;</span><span class="p">,</span>
+</span><span class='line'>                                             <span class="n">name</span><span class="o">=</span><span class="s">&quot;user-role&quot;</span><span class="p">))</span>
+</span><span class='line'>
+</span><span class='line'><span class="n">rbac</span> <span class="o">=</span> <span class="n">kubernetes</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">RbacAuthorizationV1Api</span><span class="p">()</span>
+</span><span class='line'><span class="n">rbac</span><span class="o">.</span><span class="n">create_namespaced_role_binding</span><span class="p">(</span><span class="n">namespace</span><span class="o">=</span><span class="s">&quot;user-namespace&quot;</span><span class="p">,</span>
+</span><span class='line'>                                        <span class="n">body</span><span class="o">=</span><span class="n">role_binding</span><span class="p">)</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>And that&rsquo;s it. Now, the user &lsquo;user&rsquo; has access to it&rsquo;s own namespace &lsquo;user-namespace&rsquo; and may manage deployments.</p>
+
+<p>There&rsquo;s one more thing. What if you want to make sure, a user does not deplete all the cluster&rsquo;s resources?
+With the current configuration, he or she is able to spawn new pods until all the nodes are full.
+It turns out, kubernetes has a way of handling this. It&rsquo;s called resource quota, and my next post will be about it.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Creating Client Certificates for Kubernetes Apiserver With Python]]></title>
