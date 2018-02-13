@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.sitemaps.org/schemas/sitemap/0.9 http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd" xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 <url>
+<loc>http://fnordian.github.io/blog/2018/02/13/setting-kubernetes-resource-quotas-with-python/</loc>
+<lastmod>2018-02-13T10:27:53+07:00</lastmod>
+</url>
+<url>
 <loc>http://fnordian.github.io/blog/2018/02/12/limitted-authorization-for-a-kubernetes-user-with-python/</loc>
 <lastmod>2018-02-12T08:09:56+07:00</lastmod>
 </url>
