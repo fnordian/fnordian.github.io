@@ -4,7 +4,7 @@
   <title><![CDATA[Random tech thoughts]]></title>
   <link href="http://fnordian.github.io/atom.xml" rel="self"/>
   <link href="http://fnordian.github.io/"/>
-  <updated>2018-02-21T16:20:03+07:00</updated>
+  <updated>2018-02-21T16:30:43+07:00</updated>
   <id>http://fnordian.github.io/</id>
   <author>
     <name><![CDATA[Marcus Hunger]]></name>
@@ -231,7 +231,7 @@ e.g. a cifs-share mounted directly to the pod is, that it can
 store files for multiple users (with different uids) and also selinux context labels.</p>
 
 <p>You can find the running driver on <a href="https://github.com/fnordian/fs-on-cifs-flexvolume">github</a>.
-It expects name, username and password as arguments of a cifs-share, so be sure to have specified them in the PV.
+It expects name, username and password of a cifs-share as arguments, so be sure to have specified them in the PV.
 Please note the lack of error- and corner-case-handling.</p>
 
 <p>Setting up the cifs share with samba is also straight forward. I&rsquo;ve included a sample smb.conf in the repository.
