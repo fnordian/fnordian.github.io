@@ -4,7 +4,7 @@
   <title><![CDATA[Random tech thoughts]]></title>
   <link href="http://fnordian.github.io/atom.xml" rel="self"/>
   <link href="http://fnordian.github.io/"/>
-  <updated>2018-02-13T07:27:49+07:00</updated>
+  <updated>2018-02-21T16:20:03+07:00</updated>
   <id>http://fnordian.github.io/</id>
   <author>
     <name><![CDATA[Marcus Hunger]]></name>
@@ -12,6 +12,232 @@
   </author>
   <generator uri="http://octopress.org/">Octopress</generator>
 
+  
+  <entry>
+    <title type="html"><![CDATA[Kubernetes Persistent Volumes With CIFS and Loop Devices]]></title>
+    <link href="http://fnordian.github.io/blog/2018/02/21/kubernetes-persistent-volumes-with-cifs-and-loop-devices/"/>
+    <updated>2018-02-21T11:14:16+07:00</updated>
+    <id>http://fnordian.github.io/blog/2018/02/21/kubernetes-persistent-volumes-with-cifs-and-loop-devices</id>
+    <content type="html"><![CDATA[<p>Here&rsquo;s an idea for a poor man&rsquo;s NAS for Kubernetes PVs: All you need is a fileserver running samba and some bash scripting.</p>
+
+<p>But let&rsquo;s begin at how Kubernetes handles storage. The key philosophy here is, that storage is something different than
+computation, so storage get&rsquo;s it&rsquo;s own abstraction (i.e. Kubernetes resource).
+While computation is basically handled by pods, persistent storage is offered by Persistent Volumes (PV),
+which can be mounted inside a pod&rsquo;s container as a volume. In order to mount a PV in a pod,
+the pod has to reference a Persistent Volume Claim (PVC).</p>
+
+<p>The Persistent Volume Claim defines the requirements for the storage, e.g. capacity, and acts like a bridge between pod and
+PV, bringing them together. After a PVC is deployed it is <em>pending</em> and the controller-manager tries to match it to a PV.
+When that succeeds, the PVC is <em>bound</em> to the PV and available to be mounted in a pod as a volume.</p>
+
+<script src="http://fnordian.github.io/assets/mermaid.min.js"></script>
+
+
+<div class="mermaid">
+graph LR;
+    pvc[Persistent Volume Claim] -- controller manager binds --> pv[Persistent Volume]
+    pod[Pod] -- mounts --> pvc  
+</div>
+
+
+<p>PVCs have a lifecycle separate from pods, so a pod can be created, deleted and recreated, while the PVC and with it the
+persistent storage (the stored data) stays alive and <em>bound</em>. When the PVC gets deleted, the stored data becomes
+unavailble for good and the PV can be <a href="https://kubernetes.io/docs/concepts/storage/persistent-volumes/#reclaiming">reclaimed</a>.</p>
+
+<p>pod.yaml</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Pod</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">busybox</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">default</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">containers</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">image</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">busybox</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">command</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">sleep</span>
+</span><span class='line'>      <span class="p-Indicator">-</span> <span class="s">&quot;3600&quot;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">imagePullPolicy</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">IfNotPresent</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">busybox</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">volumeMounts</span><span class="p-Indicator">:</span>
+</span><span class='line'>            <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-pv</span>
+</span><span class='line'>              <span class="l-Scalar-Plain">mountPath</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/volume</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">restartPolicy</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Always</span>
+</span><span class='line'>
+</span><span class='line'>  <span class="l-Scalar-Plain">volumes</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-pv</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">persistentVolumeClaim</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">claimName</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-pv-claim</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>pvc.yaml</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">PersistentVolumeClaim</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-pv-claim</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">accessModes</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">ReadWriteOnce</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">resources</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">requests</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">storage</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">100Mi</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>Because PV is only an abstract concept of storage, there has to be something, that implements how files are persisted.
+This is the storage <em>provisioner</em>. It&rsquo;s job is to mount some kind of storage on the so it&rsquo;s available for the pod.
+There are <a href="https://kubernetes.io/docs/concepts/storage/persistent-volumes/#types-of-persistent-volumes">several provisioners</a> shipped within Kubernetes, most of them for proprietary cloud providers or datacenter-scale
+storage systems. Luckily there is also <strong>FlexVolume</strong>, which allows you to implement your own provisioner easily.</p>
+
+<p>pv.yaml</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+</pre></td><td class='code'><pre><code class='yaml'><span class='line'><span class="l-Scalar-Plain">apiVersion</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v1</span>
+</span><span class='line'><span class="l-Scalar-Plain">kind</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">PersistentVolume</span>
+</span><span class='line'><span class="l-Scalar-Plain">metadata</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">pv0003</span>
+</span><span class='line'><span class="l-Scalar-Plain">spec</span><span class="p-Indicator">:</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">capacity</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">storage</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1Gi</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">volumeMode</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Filesystem</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">accessModes</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">ReadWriteOnce</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">persistentVolumeReclaimPolicy</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Retain</span>
+</span><span class='line'>  <span class="l-Scalar-Plain">flexVolume</span><span class="p-Indicator">:</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">driver</span><span class="p-Indicator">:</span> <span class="s">&quot;fnordian/cv&quot;</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">readOnly</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+</span><span class='line'>    <span class="l-Scalar-Plain">options</span><span class="p-Indicator">:</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">source</span><span class="p-Indicator">:</span> <span class="s">&quot;//192.168.121.225/kubvolumes&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">mountOptions</span><span class="p-Indicator">:</span> <span class="s">&quot;dir_mode=0700,file_mode=0600&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">cifsuser</span><span class="p-Indicator">:</span> <span class="s">&quot;nobody&quot;</span>
+</span><span class='line'>      <span class="l-Scalar-Plain">cifspass</span><span class="p-Indicator">:</span> <span class="s">&quot;nobody&quot;</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<h2>Using FlexVolume</h2>
+
+<p>So FlexVolume does not implement any storage mounting itself, but it gives you the opportunity to do it yourself
+in form of a <em>driver</em>.
+The <em>driver</em>&rsquo;s API is not too complicated and often implementing 3 actions (init, mount, unmount) is enough.</p>
+
+<p>The details of a driver are explained <a href="https://github.com/kubernetes/community/blob/master/contributors/devel/flexvolume.md">here</a>.
+The gist of creating a most basic driver is: It needs to have a name (vendor-drivername) and must reside as an executable
+in a certain path on every node. It defaults to:</p>
+
+<p>/usr/libexec/kubernetes/kubelet-plugins/volume/exec/<em>vendor</em>~<em>drivername</em>/<em>drivername</em></p>
+
+<p>The driver is then called with command line arguments, specifying the action and is expected to respond with json written to
+stdout. Here is an example</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+</pre></td><td class='code'><pre><code class='bash'><span class='line'>/usr/libexec/kubernetes/kubelet-plugins/volume/exec/fnordian~cv/cv init
+</span><span class='line'>
+</span><span class='line'><span class="c"># response: {&quot;status&quot;: &quot;Success&quot;, &quot;capabilities&quot;: {&quot;attach&quot;: false}}</span>
+</span><span class='line'>
+</span><span class='line'>/usr/libexec/kubernetes/kubelet-plugins/volume/exec/fnordian~cv/cv mount <span class="se">\</span>
+</span><span class='line'>    /var/lib/kubelet/pods/ce4b5af0-16de-11e8-bcfd-5254002cac04/volumes/fnordian~cv/pv0003 <span class="se">\</span>
+</span><span class='line'>    <span class="o">{</span><span class="s2">&quot;cifspass&quot;</span>:<span class="s2">&quot;nobody&quot;</span>,<span class="s2">&quot;cifsuser&quot;</span>:<span class="s2">&quot;nobody&quot;</span>,<span class="s2">&quot;kubernetes.io/fsType&quot;</span>:<span class="s2">&quot;&quot;</span>,<span class="s2">&quot;kubernetes.io/pod.name&quot;</span>:<span class="s2">&quot;busybox&quot;</span>,<span class="se">\</span>
+</span><span class='line'>    <span class="s2">&quot;kubernetes.io/pod.namespace&quot;</span>:<span class="s2">&quot;default&quot;</span>,<span class="s2">&quot;kubernetes.io/pod.uid&quot;</span>:<span class="s2">&quot;ce4b5af0-16de-11e8-bcfd-5254002cac04&quot;</span>,<span class="se">\</span>
+</span><span class='line'>    <span class="s2">&quot;kubernetes.io/pvOrVolumeName&quot;</span>:<span class="s2">&quot;pv0003&quot;</span>,<span class="s2">&quot;kubernetes.io/readwrite&quot;</span>:<span class="s2">&quot;rw&quot;</span>,<span class="s2">&quot;kubernetes.io/serviceAccount.name&quot;</span>:<span class="s2">&quot;default&quot;</span>,<span class="se">\</span>
+</span><span class='line'>    <span class="s2">&quot;mountOptions&quot;</span>:<span class="s2">&quot;dir_mode=0700,file_mode=0600&quot;</span>,<span class="s2">&quot;source&quot;</span>:<span class="s2">&quot;//192.168.121.159/kubvolumes&quot;</span><span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'><span class="c"># response: {&#39;status&#39;: &#39;Success&#39;}</span>
+</span><span class='line'>
+</span><span class='line'>/usr/libexec/kubernetes/kubelet-plugins/volume/exec/fnordian~cv/cv unmount /var/lib/kubelet/pods/a80184b0-16df-11e8-bcfd-5254002cac04/volumes/fnordian~cv/pv0003
+</span><span class='line'>
+</span><span class='line'><span class="c"># response: {&#39;status&#39;: &#39;Success&#39;}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>As you can see, the driver&rsquo;s mount action gets passed a target directory and parameters specifying the volume as JSON.
+After it returned with success, it is expected to have mounted a volume to the target directory. Unmounting follows the
+same principle but only needs the target directory as the argument.</p>
+
+<h2>Mount storage on CIFS</h2>
+
+<p>Now that we have the kubernetes specifics out of the way, all that&rsquo;s left is setting up a cifs-share and writing the driver.
+The idea for the driver is, that the actual volume is a filesystem inside a plain file, which is made available to the nodes via cifs and mounted for
+the pod using loop.</p>
+
+<p>I agree, that it is a bit complex, but the advantage of a filesystem inside a loop-device over
+e.g. a cifs-share mounted directly to the pod is, that it can
+store files for multiple users (with different uids) and also selinux context labels.</p>
+
+<p>You can find the running driver on <a href="https://github.com/fnordian/fs-on-cifs-flexvolume">github</a>.
+It expects name, username and password as arguments of a cifs-share, so be sure to have specified them in the PV.
+Please note the lack of error- and corner-case-handling.</p>
+
+<p>Setting up the cifs share with samba is also straight forward. I&rsquo;ve included a sample smb.conf in the repository.
+Be sure to also set a password using smbpasswd.</p>
+]]></content>
+  </entry>
   
   <entry>
     <title type="html"><![CDATA[Setting Kubernetes Resource Quotas With Python]]></title>
