@@ -9,7 +9,8 @@
   <meta name="author" content="Marcus Hunger">
 
   
-  <meta name="description" content="Here&rsquo;s an idea for a poor man&rsquo;s NAS for Kubernetes PVs: All you need is a fileserver running samba and some bash scripting. But let&rsquo &hellip;">
+  <meta name="description" content="I recently had to create a (micro-) service, offering APIs to a user frontend and to other internal services.
+The frontend apis were supposed to &hellip;">
   
 
   <!-- http://t.co/dKP3o1e -->
@@ -77,6 +78,380 @@
     <div id="content">
       <div class="blog-index">
   
+  
+  
+    <article>
+      
+  <header>
+    
+      <h1 class="entry-title"><a href="/blog/2018/10/14/private-and-public-apis-on-different-ports-with-spring/">Private and Public Apis on Different Ports With Spring</a></h1>
+    
+    
+      <p class="meta">
+        
+
+
+
+
+<time class='entry-date' datetime='2018-10-14T17:10:46+08:00'><span class='date'><span class='date-month'>Oct</span> <span class='date-day'>14</span><span class='date-suffix'>th</span>, <span class='date-year'>2018</span></span> <span class='time'>5:10 pm</span></time>
+        
+      </p>
+    
+  </header>
+
+
+  <div class="entry-content"><p>I recently had to create a (micro-) service, offering APIs to a user frontend and to other internal services.
+The frontend apis were supposed to require authentication by the user/browser and the internal apis were to work without authentication.
+But because the internal apis represented sensitive functionality, they should only by available to internal services.</p>
+
+<p>When creating a HTTP/REST microservice with Spring, the service usually binds to one tcp port. So every client which is able to connect to this port
+is also able call all the endpoints of the services. This poses a problem, when one needs to offer private and publics apis on the same service.</p>
+
+<p>There are several options how to control access to different endpoints. One could create different services and bind them to different hosts or ports and have a firewall control the access. Or one might have a reverse proxy in front of the service, and regulate access with it.</p>
+
+<p>One easy way is to have the same service offer different apis on different ports. It requires some more advanced configuration of spring, but has the advantage of keeping all functionality in one service. The only external requirement for limitting access to the private apis is some kind of firewalling to restrict access to the private tcp port.</p>
+
+<p>Here is how it&rsquo;s done with Spring.</p>
+
+<h2>Different path-prefixes for internal apis</h2>
+
+<p>It all starts with two controller methods, one offering an internal endpoint, the other one offering an external endpoint.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='java'><span class='line'><span class="nd">@Controller</span>
+</span><span class='line'><span class="kd">public</span> <span class="kd">class</span> <span class="nc">ExternalApiController</span> <span class="o">{</span>
+</span><span class='line'>    <span class="nd">@GetMapping</span><span class="o">(</span><span class="s">&quot;/external/hello&quot;</span><span class="o">)</span>
+</span><span class='line'>    <span class="kd">public</span> <span class="n">ResponseEntity</span><span class="o">&lt;</span><span class="n">String</span><span class="o">&gt;</span> <span class="nf">hello</span><span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>        <span class="k">return</span> <span class="n">ResponseEntity</span><span class="o">.</span><span class="na">ok</span><span class="o">(</span><span class="s">&quot;Hello stranger&quot;</span><span class="o">);</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+</pre></td><td class='code'><pre><code class='java'><span class='line'><span class="nd">@Controller</span>
+</span><span class='line'><span class="kd">public</span> <span class="kd">class</span> <span class="nc">InternalApiController</span> <span class="o">{</span>
+</span><span class='line'>    <span class="nd">@GetMapping</span><span class="o">(</span><span class="s">&quot;/internal/hello&quot;</span><span class="o">)</span>
+</span><span class='line'>    <span class="kd">public</span> <span class="n">ResponseEntity</span><span class="o">&lt;</span><span class="n">String</span><span class="o">&gt;</span> <span class="nf">hello</span><span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>        <span class="k">return</span> <span class="n">ResponseEntity</span><span class="o">.</span><span class="na">ok</span><span class="o">(</span><span class="s">&quot;Hello friend&quot;</span><span class="o">);</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>
+Note, that one controller serves under a path starting with <code>/external</code>, the other under <code>/internal</code>. This will be used later to systematically distinguish requests.</p>
+
+<p>By default, these two endpoints are available at the same port and therefor it&rsquo;s difficult to restrict access to the internal endpoint.</p>
+
+<h2>Listen on multiple ports</h2>
+
+<p>To change this, we first have to make spring listen on a second port. The internal tomcat server allows to listen on additional ports through
+a <code>WebServerFactoryCustomizer</code>, which can be provided as a bean.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+<span class='line-number'>40</span>
+<span class='line-number'>41</span>
+<span class='line-number'>42</span>
+<span class='line-number'>43</span>
+<span class='line-number'>44</span>
+<span class='line-number'>45</span>
+<span class='line-number'>46</span>
+<span class='line-number'>47</span>
+<span class='line-number'>48</span>
+<span class='line-number'>49</span>
+<span class='line-number'>50</span>
+<span class='line-number'>51</span>
+<span class='line-number'>52</span>
+<span class='line-number'>53</span>
+<span class='line-number'>54</span>
+<span class='line-number'>55</span>
+<span class='line-number'>56</span>
+<span class='line-number'>57</span>
+<span class='line-number'>58</span>
+<span class='line-number'>59</span>
+<span class='line-number'>60</span>
+<span class='line-number'>61</span>
+<span class='line-number'>62</span>
+</pre></td><td class='code'><pre><code class='java'><span class='line'><span class="nd">@Configuration</span>
+</span><span class='line'><span class="kd">public</span> <span class="kd">class</span> <span class="nc">TrustedPortConfiguration</span> <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nd">@Value</span><span class="o">(</span><span class="s">&quot;${server.port:8080}&quot;</span><span class="o">)</span>
+</span><span class='line'>    <span class="kd">private</span> <span class="n">String</span> <span class="n">serverPort</span><span class="o">;</span>
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>    <span class="nd">@Value</span><span class="o">(</span><span class="s">&quot;${management.port:${server.port:8080}}&quot;</span><span class="o">)</span>
+</span><span class='line'>    <span class="kd">private</span> <span class="n">String</span> <span class="n">managementPort</span><span class="o">;</span>
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>    <span class="nd">@Value</span><span class="o">(</span><span class="s">&quot;${server.trustedPort:null}&quot;</span><span class="o">)</span>
+</span><span class='line'>    <span class="kd">private</span> <span class="n">String</span> <span class="n">trustedPort</span><span class="o">;</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nd">@Bean</span>
+</span><span class='line'>    <span class="kd">public</span> <span class="n">WebServerFactoryCustomizer</span> <span class="nf">servletContainer</span><span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="n">Connector</span><span class="o">[]</span> <span class="n">additionalConnectors</span> <span class="o">=</span> <span class="k">this</span><span class="o">.</span><span class="na">additionalConnector</span><span class="o">();</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="n">ServerProperties</span> <span class="n">serverProperties</span> <span class="o">=</span> <span class="k">new</span> <span class="nf">ServerProperties</span><span class="o">();</span>
+</span><span class='line'>        <span class="k">return</span> <span class="k">new</span> <span class="nf">TomcatMultiConnectorServletWebServerFactoryCustomizer</span><span class="o">(</span><span class="n">serverProperties</span><span class="o">,</span> <span class="n">additionalConnectors</span><span class="o">);</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>
+</span><span class='line'>    <span class="kd">private</span> <span class="n">Connector</span><span class="o">[]</span> <span class="nf">additionalConnector</span><span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="k">if</span> <span class="o">(</span><span class="n">StringUtils</span><span class="o">.</span><span class="na">isEmpty</span><span class="o">(</span><span class="k">this</span><span class="o">.</span><span class="na">trustedPort</span><span class="o">)</span> <span class="o">||</span> <span class="s">&quot;null&quot;</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">trustedPort</span><span class="o">))</span> <span class="o">{</span>
+</span><span class='line'>            <span class="k">return</span> <span class="kc">null</span><span class="o">;</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="n">Set</span><span class="o">&lt;</span><span class="n">String</span><span class="o">&gt;</span> <span class="n">defaultPorts</span> <span class="o">=</span> <span class="k">new</span> <span class="n">HashSet</span><span class="o">&lt;&gt;();</span>
+</span><span class='line'>        <span class="n">defaultPorts</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">serverPort</span><span class="o">);</span>
+</span><span class='line'>        <span class="n">defaultPorts</span><span class="o">.</span><span class="na">add</span><span class="o">(</span><span class="n">managementPort</span><span class="o">);</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="k">if</span> <span class="o">(!</span><span class="n">defaultPorts</span><span class="o">.</span><span class="na">contains</span><span class="o">(</span><span class="n">trustedPort</span><span class="o">))</span> <span class="o">{</span>
+</span><span class='line'>            <span class="n">Connector</span> <span class="n">connector</span> <span class="o">=</span> <span class="k">new</span> <span class="nf">Connector</span><span class="o">(</span><span class="s">&quot;org.apache.coyote.http11.Http11NioProtocol&quot;</span><span class="o">);</span>
+</span><span class='line'>            <span class="n">connector</span><span class="o">.</span><span class="na">setScheme</span><span class="o">(</span><span class="s">&quot;http&quot;</span><span class="o">);</span>
+</span><span class='line'>            <span class="n">connector</span><span class="o">.</span><span class="na">setPort</span><span class="o">(</span><span class="n">Integer</span><span class="o">.</span><span class="na">valueOf</span><span class="o">(</span><span class="n">trustedPort</span><span class="o">));</span>
+</span><span class='line'>            <span class="k">return</span> <span class="k">new</span> <span class="n">Connector</span><span class="o">[]{</span><span class="n">connector</span><span class="o">};</span>
+</span><span class='line'>        <span class="o">}</span> <span class="k">else</span> <span class="o">{</span>
+</span><span class='line'>            <span class="k">return</span> <span class="k">new</span> <span class="n">Connector</span><span class="o">[]{};</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="kd">private</span> <span class="kd">class</span> <span class="nc">TomcatMultiConnectorServletWebServerFactoryCustomizer</span> <span class="kd">extends</span> <span class="n">TomcatServletWebServerFactoryCustomizer</span> <span class="o">{</span>
+</span><span class='line'>        <span class="kd">private</span> <span class="kd">final</span> <span class="n">Connector</span><span class="o">[]</span> <span class="n">additionalConnectors</span><span class="o">;</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="n">TomcatMultiConnectorServletWebServerFactoryCustomizer</span><span class="o">(</span><span class="n">ServerProperties</span> <span class="n">serverProperties</span><span class="o">,</span> <span class="n">Connector</span><span class="o">[]</span> <span class="n">additionalConnectors</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>            <span class="kd">super</span><span class="o">(</span><span class="n">serverProperties</span><span class="o">);</span>
+</span><span class='line'>            <span class="k">this</span><span class="o">.</span><span class="na">additionalConnectors</span> <span class="o">=</span> <span class="n">additionalConnectors</span><span class="o">;</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="nd">@Override</span>
+</span><span class='line'>        <span class="kd">public</span> <span class="kt">void</span> <span class="nf">customize</span><span class="o">(</span><span class="n">TomcatServletWebServerFactory</span> <span class="n">factory</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>            <span class="kd">super</span><span class="o">.</span><span class="na">customize</span><span class="o">(</span><span class="n">factory</span><span class="o">);</span>
+</span><span class='line'>
+</span><span class='line'>            <span class="k">if</span> <span class="o">(</span><span class="n">additionalConnectors</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">additionalConnectors</span><span class="o">.</span><span class="na">length</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>                <span class="n">factory</span><span class="o">.</span><span class="na">addAdditionalTomcatConnectors</span><span class="o">(</span><span class="n">additionalConnectors</span><span class="o">);</span>
+</span><span class='line'>            <span class="o">}</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p></p>
+
+<p>With this configuration, the internal tomcat listens on two ports, and all endpoints are available on them. Half way there.
+All that&rsquo;s left to do is restricting endpoints to a certain port.</p>
+
+<h2>Filter requests based on path and port</h2>
+
+<p>With spring, all incoming requests can be filtered, before they reach a controller. Filtering means, requests can be modified and answered,
+and the filter can decide, if the request either should be passed on for further processing, or if processing ends with it.</p>
+
+<p>To write a filter, one must implement <code>Filter</code> and provide <code>public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain)</code>.
+A Response can be generated and the request can be analyzed. If the processing of the request should continue, <code>filterChain.doFilter</code> must be called.
+Otherwise, the filter just returns.</p>
+
+<p>Here&rsquo;s one way how to implement a filter in order to filter requests to a internal api based on internal/external ports.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+<span class='line-number'>15</span>
+<span class='line-number'>16</span>
+<span class='line-number'>17</span>
+<span class='line-number'>18</span>
+<span class='line-number'>19</span>
+<span class='line-number'>20</span>
+<span class='line-number'>21</span>
+<span class='line-number'>22</span>
+<span class='line-number'>23</span>
+<span class='line-number'>24</span>
+<span class='line-number'>25</span>
+<span class='line-number'>26</span>
+<span class='line-number'>27</span>
+<span class='line-number'>28</span>
+<span class='line-number'>29</span>
+<span class='line-number'>30</span>
+<span class='line-number'>31</span>
+<span class='line-number'>32</span>
+<span class='line-number'>33</span>
+<span class='line-number'>34</span>
+<span class='line-number'>35</span>
+<span class='line-number'>36</span>
+<span class='line-number'>37</span>
+<span class='line-number'>38</span>
+<span class='line-number'>39</span>
+</pre></td><td class='code'><pre><code class='java'><span class='line'><span class="kd">public</span> <span class="kd">class</span> <span class="nc">TrustedEndpointsFilter</span> <span class="kd">implements</span> <span class="n">Filter</span> <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="kd">private</span> <span class="kt">int</span> <span class="n">trustedPortNum</span> <span class="o">=</span> <span class="mi">0</span><span class="o">;</span>
+</span><span class='line'>    <span class="kd">private</span> <span class="n">String</span> <span class="n">trustedPathPrefix</span><span class="o">;</span>
+</span><span class='line'>    <span class="kd">private</span> <span class="kd">final</span> <span class="n">Logger</span> <span class="n">log</span> <span class="o">=</span> <span class="n">LoggerFactory</span><span class="o">.</span><span class="na">getLogger</span><span class="o">(</span><span class="n">getClass</span><span class="o">().</span><span class="na">getName</span><span class="o">());</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="n">TrustedEndpointsFilter</span><span class="o">(</span><span class="n">String</span> <span class="n">trustedPort</span><span class="o">,</span> <span class="n">String</span> <span class="n">trustedPathPrefix</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>        <span class="k">if</span> <span class="o">(</span><span class="n">trustedPort</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="n">trustedPathPrefix</span> <span class="o">!=</span> <span class="kc">null</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="s">&quot;null&quot;</span><span class="o">.</span><span class="na">equals</span><span class="o">(</span><span class="n">trustedPathPrefix</span><span class="o">))</span> <span class="o">{</span>
+</span><span class='line'>            <span class="n">trustedPortNum</span> <span class="o">=</span> <span class="n">Integer</span><span class="o">.</span><span class="na">valueOf</span><span class="o">(</span><span class="n">trustedPort</span><span class="o">);</span>
+</span><span class='line'>            <span class="k">this</span><span class="o">.</span><span class="na">trustedPathPrefix</span> <span class="o">=</span> <span class="n">trustedPathPrefix</span><span class="o">;</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nd">@Override</span>
+</span><span class='line'>    <span class="kd">public</span> <span class="kt">void</span> <span class="nf">doFilter</span><span class="o">(</span><span class="n">ServletRequest</span> <span class="n">servletRequest</span><span class="o">,</span> <span class="n">ServletResponse</span> <span class="n">servletResponse</span><span class="o">,</span> <span class="n">FilterChain</span> <span class="n">filterChain</span><span class="o">)</span> <span class="kd">throws</span> <span class="n">IOException</span><span class="o">,</span> <span class="n">ServletException</span> <span class="o">{</span>
+</span><span class='line'>        <span class="k">if</span> <span class="o">(</span><span class="n">trustedPortNum</span> <span class="o">!=</span> <span class="mi">0</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>            <span class="k">if</span> <span class="o">(</span><span class="n">isRequestForTrustedEndpoint</span><span class="o">(</span><span class="n">servletRequest</span><span class="o">)</span> <span class="o">&amp;&amp;</span> <span class="n">servletRequest</span><span class="o">.</span><span class="na">getLocalPort</span><span class="o">()</span> <span class="o">!=</span> <span class="n">trustedPortNum</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>                <span class="n">log</span><span class="o">.</span><span class="na">warn</span><span class="o">(</span><span class="s">&quot;denying request for trusted endpoint on untrusted port&quot;</span><span class="o">);</span>
+</span><span class='line'>                <span class="o">((</span><span class="n">ResponseFacade</span><span class="o">)</span> <span class="n">servletResponse</span><span class="o">).</span><span class="na">setStatus</span><span class="o">(</span><span class="mi">404</span><span class="o">);</span>
+</span><span class='line'>                <span class="n">servletResponse</span><span class="o">.</span><span class="na">getOutputStream</span><span class="o">().</span><span class="na">close</span><span class="o">();</span>
+</span><span class='line'>                <span class="k">return</span><span class="o">;</span>
+</span><span class='line'>            <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>            <span class="k">if</span> <span class="o">(!</span><span class="n">isRequestForTrustedEndpoint</span><span class="o">(</span><span class="n">servletRequest</span><span class="o">)</span> <span class="o">&amp;&amp;</span> <span class="n">servletRequest</span><span class="o">.</span><span class="na">getLocalPort</span><span class="o">()</span> <span class="o">==</span> <span class="n">trustedPortNum</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>                <span class="n">log</span><span class="o">.</span><span class="na">warn</span><span class="o">(</span><span class="s">&quot;denying request for untrusted endpoint on trusted port&quot;</span><span class="o">);</span>
+</span><span class='line'>                <span class="o">((</span><span class="n">ResponseFacade</span><span class="o">)</span> <span class="n">servletResponse</span><span class="o">).</span><span class="na">setStatus</span><span class="o">(</span><span class="mi">404</span><span class="o">);</span>
+</span><span class='line'>                <span class="n">servletResponse</span><span class="o">.</span><span class="na">getOutputStream</span><span class="o">().</span><span class="na">close</span><span class="o">();</span>
+</span><span class='line'>                <span class="k">return</span><span class="o">;</span>
+</span><span class='line'>            <span class="o">}</span>
+</span><span class='line'>        <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>        <span class="n">filterChain</span><span class="o">.</span><span class="na">doFilter</span><span class="o">(</span><span class="n">servletRequest</span><span class="o">,</span> <span class="n">servletResponse</span><span class="o">);</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="kd">private</span> <span class="kt">boolean</span> <span class="nf">isRequestForTrustedEndpoint</span><span class="o">(</span><span class="n">ServletRequest</span> <span class="n">servletRequest</span><span class="o">)</span> <span class="o">{</span>
+</span><span class='line'>        <span class="k">return</span> <span class="o">((</span><span class="n">RequestFacade</span><span class="o">)</span> <span class="n">servletRequest</span><span class="o">).</span><span class="na">getRequestURI</span><span class="o">().</span><span class="na">startsWith</span><span class="o">(</span><span class="n">trustedPathPrefix</span><span class="o">);</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>The filter decides based on a configurable prefix of the request path, if this request is for an internal or an external endpoint
+and checks, if it arrived on the right port. If so, the request is passed on. If not, it is rejected with a status <code>404</code>.</p>
+
+<p>To activate the filter, it must be provided as a bean.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+<span class='line-number'>4</span>
+<span class='line-number'>5</span>
+<span class='line-number'>6</span>
+<span class='line-number'>7</span>
+<span class='line-number'>8</span>
+<span class='line-number'>9</span>
+<span class='line-number'>10</span>
+<span class='line-number'>11</span>
+<span class='line-number'>12</span>
+<span class='line-number'>13</span>
+<span class='line-number'>14</span>
+</pre></td><td class='code'><pre><code class='java'><span class='line'><span class="nd">@Configuration</span>
+</span><span class='line'><span class="kd">public</span> <span class="kd">class</span> <span class="nc">WebConfig</span> <span class="kd">implements</span> <span class="n">WebMvcConfigurer</span> <span class="o">{</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nd">@Value</span><span class="o">(</span><span class="s">&quot;${server.trustedPort:null}&quot;</span><span class="o">)</span>
+</span><span class='line'>    <span class="kd">private</span> <span class="n">String</span> <span class="n">trustedPort</span><span class="o">;</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nd">@Value</span><span class="o">(</span><span class="s">&quot;${server.trustedPathPrefix:null}&quot;</span><span class="o">)</span>
+</span><span class='line'>    <span class="kd">private</span> <span class="n">String</span> <span class="n">trustedPathPrefix</span><span class="o">;</span>
+</span><span class='line'>
+</span><span class='line'>    <span class="nd">@Bean</span>
+</span><span class='line'>    <span class="kd">public</span> <span class="n">FilterRegistrationBean</span><span class="o">&lt;</span><span class="n">TrustedEndpointsFilter</span><span class="o">&gt;</span> <span class="nf">trustedEndpointsFilter</span><span class="o">()</span> <span class="o">{</span>
+</span><span class='line'>        <span class="k">return</span> <span class="k">new</span> <span class="n">FilterRegistrationBean</span><span class="o">&lt;&gt;(</span><span class="k">new</span> <span class="nf">TrustedEndpointsFilter</span><span class="o">(</span><span class="n">trustedPort</span><span class="o">,</span> <span class="n">trustedPathPrefix</span><span class="o">));</span>
+</span><span class='line'>    <span class="o">}</span>
+</span><span class='line'><span class="o">}</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p></p>
+
+<h2>Configuration</h2>
+
+<p>Finally, some configuration has to be provided, to define ports and the paths.</p>
+
+<figure class='code'><figcaption><span></span></figcaption><div class="highlight"><table><tr><td class="gutter"><pre class="line-numbers"><span class='line-number'>1</span>
+<span class='line-number'>2</span>
+<span class='line-number'>3</span>
+</pre></td><td class='code'><pre><code class='properties'><span class='line'><span class="na">server.port</span><span class="o">=</span><span class="s">8002</span>
+</span><span class='line'><span class="na">server.trustedPort</span><span class="o">=</span><span class="s">8003</span>
+</span><span class='line'><span class="na">server.trustedPathPrefix</span><span class="o">=</span><span class="s">/internal/</span>
+</span></code></pre></td></tr></table></div></figure>
+
+
+<p>All requests to a path starting with <code>server.trustedPathPrefix</code> are served on <code>server.trustedPort</code> and all other requests are served on <code>server.port</code>.</p>
+
+<h2>Conclusion</h2>
+
+<p>Spring is incredible flexible and allows quite sophisticated configurations. It is easily possible to configure it to serve different endpoints on different tcp ports.
+With that one can serve internal apis and external apis using the same spring server instance and control access to them using firewalling.</p>
+
+<p>You can find the complete example at <a href="https://github.com/fnordian/spring-multiport">my Github</a>.</p>
+</div>
+  
+  
+
+
+    </article>
   
   
     <article>
@@ -889,6 +1264,10 @@ So here is a python script that creates/takes a ca and creates new client certif
     <section>
   <h1>Recent Posts</h1>
   <ul id="recent_posts">
+    
+      <li class="post">
+        <a href="/blog/2018/10/14/private-and-public-apis-on-different-ports-with-spring/">Private and Public Apis on Different Ports With Spring</a>
+      </li>
     
       <li class="post">
         <a href="/blog/2018/02/21/kubernetes-persistent-volumes-with-cifs-and-loop-devices/">Kubernetes Persistent Volumes With CIFS and Loop Devices</a>
